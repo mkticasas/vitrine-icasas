@@ -514,10 +514,7 @@ async function uploadPhoto(obraId, roomId, file) {
 // STATS
 // ══════════════════════════════
 function updateStats() {
-  const totalFotos = obras.reduce((a, o) => a + (o.rooms || []).reduce((b, r) => b + (r.photos || []).length, 0), 0);
-  document.getElementById('statObras').textContent = obras.length;
-  document.getElementById('statFotos').textContent = totalFotos;
-  document.getElementById('statEntregues').textContent = obras.filter(o => o.size).length;
+  // stats display removed, nothing to update
 }
 
 // ══════════════════════════════
