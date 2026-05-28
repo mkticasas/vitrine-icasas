@@ -163,6 +163,10 @@ header{background:var(--black2);padding:0;position:sticky;top:0;z-index:100;bord
 .btn-zoom{position:absolute;bottom:1.25rem;right:1.5rem;background:rgba(0,0,0,0.5);border:1px solid var(--border);color:var(--text-muted);width:34px;height:34px;cursor:pointer;font-size:0.9rem;display:flex;align-items:center;justify-content:center;transition:all 0.2s;z-index:10;backdrop-filter:blur(4px)}
 .btn-zoom:hover{border-color:var(--green-accent);color:var(--green-accent)}
 #slideImg{cursor:zoom-in}
+#slideVideo{max-height:100%;max-width:100%;object-fit:contain;display:none;outline:none}
+.thumb-video-wrap{position:relative}
+.thumb-play-icon{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.thumb-play-icon::after{content:'▶';font-size:1.2rem;color:white;text-shadow:0 0 8px rgba(0,0,0,0.8)}
 
 /* FULLSCREEN ZOOM */
 #zoomOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.97);z-index:2000;align-items:center;justify-content:center;cursor:zoom-out}
@@ -340,7 +344,7 @@ header{background:var(--black2);padding:0;position:sticky;top:0;z-index:100;bord
       <div class="modal-meta-line" id="modalMetaLine"></div>
     </div>
     <div class="modal-right">
-      <button class="btn-add-photos" id="btnAddPhotos" onclick="triggerPhotoUpload()">+ Adicionar fotos</button>
+      <button class="btn-add-photos" id="btnAddPhotos" onclick="triggerPhotoUpload()">+ Fotos / Vídeos</button>
       <button class="modal-close" onclick="closeSlideshow()">✕</button>
     </div>
   </div>
@@ -348,13 +352,14 @@ header{background:var(--black2);padding:0;position:sticky;top:0;z-index:100;bord
   <div class="slideshow-body">
     <button class="btn-slide-nav btn-slide-prev" onclick="navSlide(-1)">←</button>
     <img id="slideImg" src="" alt="" onclick="openZoom()">
+    <video id="slideVideo" controls playsinline></video>
     <div id="slideEmpty" class="slide-empty">
       <div class="slide-empty-icon">📷</div>
       <div class="slide-empty-txt">Nenhuma foto neste<br>cômodo ainda</div>
     </div>
     <button class="btn-slide-nav btn-slide-next" onclick="navSlide(1)">→</button>
     <div class="slide-counter" id="slideCounter"></div>
-    <button class="btn-zoom" onclick="openZoom()" title="Tela cheia">⤢</button>
+    <button class="btn-zoom" id="btnZoom" onclick="openZoom()" title="Tela cheia">⤢</button>
   </div>
   <div class="thumbs-bar" id="thumbsBar">
     <div class="thumbs-scroll" id="thumbsScroll"></div>
@@ -432,7 +437,7 @@ header{background:var(--black2);padding:0;position:sticky;top:0;z-index:100;bord
 <div id="toast"></div>
 
 <!-- FILE INPUT -->
-<input type="file" id="photoFileInput" accept="image/*" multiple style="display:none" onchange="handlePhotoUpload(this.files)">
+<input type="file" id="photoFileInput" accept="image/*,video/*,.mp4,.mov,.webm" multiple style="display:none" onchange="handlePhotoUpload(this.files)">
 
 <script>
 // ══════════════════════════════
@@ -530,14 +535,34 @@ function compressImage(file) {
   });
 }
 
+function isVideoFile(file) {
+  return file.type.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(file.name);
+}
+
 async function uploadPhoto(obraId, roomId, file) {
-  const compressed = await compressImage(file);
-  const path = `${obraId}/${roomId}/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
-  const { error: upErr } = await db.storage.from(STORAGE_BUCKET).upload(path, compressed, { cacheControl: '3600', contentType: 'image/jpeg' });
+  const isVideo = isVideoFile(file);
+  let uploadFile, ext, contentType, type;
+
+  if (isVideo) {
+    uploadFile = file;
+    ext = file.name.split('.').pop().toLowerCase();
+    contentType = file.type || 'video/mp4';
+    type = 'video';
+  } else {
+    uploadFile = await compressImage(file);
+    ext = 'jpg';
+    contentType = 'image/jpeg';
+    type = 'photo';
+  }
+
+  const path = `${obraId}/${roomId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error: upErr } = await db.storage.from(STORAGE_BUCKET).upload(path, uploadFile, { cacheControl: '3600', contentType });
   if (upErr) throw upErr;
   const { data: { publicUrl } } = db.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-  const { error: dbErr } = await db.from('photos').insert([{ room_id: roomId, obra_id: obraId, url: publicUrl, storage_path: path }]);
+  const { error: dbErr } = await db.from('photos').insert([{ room_id: roomId, obra_id: obraId, url: publicUrl, storage_path: path, type }]);
   if (dbErr) throw dbErr;
+  return publicUrl;
+}
   return publicUrl;
 }
 
@@ -630,34 +655,73 @@ function renderSlide() {
   const room = rooms[currentRoomIdx];
   const photos = room ? (room.photos || []) : [];
   const img = document.getElementById('slideImg');
+  const video = document.getElementById('slideVideo');
   const empty = document.getElementById('slideEmpty');
   const thumbsBar = document.getElementById('thumbsBar');
   const counter = document.getElementById('slideCounter');
   const hint = document.getElementById('thumbsHint');
+  const btnZoom = document.getElementById('btnZoom');
 
   if (!photos.length) {
-    img.style.display = 'none'; empty.style.display = 'flex';
-    thumbsBar.style.display = 'none'; counter.textContent = ''; return;
+    img.style.display = 'none'; video.style.display = 'none';
+    empty.style.display = 'flex'; thumbsBar.style.display = 'none';
+    counter.textContent = ''; return;
   }
 
-  empty.style.display = 'none'; img.style.display = 'block';
-  img.classList.add('fading');
-  setTimeout(() => { img.src = photos[currentSlide].url; img.classList.remove('fading'); }, 180);
+  empty.style.display = 'none';
+  const current = photos[currentSlide];
+  const isVideo = current.type === 'video';
+
+  // pause any playing video when switching
+  if (!video.paused) { video.pause(); }
+
+  if (isVideo) {
+    img.style.display = 'none';
+    btnZoom && (btnZoom.style.display = 'none');
+    video.style.display = 'block';
+    video.src = current.url;
+    video.load();
+  } else {
+    video.style.display = 'none';
+    btnZoom && (btnZoom.style.display = 'flex');
+    img.style.display = 'block';
+    img.classList.add('fading');
+    setTimeout(() => { img.src = current.url; img.classList.remove('fading'); }, 180);
+  }
+
   counter.textContent = `${currentSlide + 1} / ${photos.length}`;
   thumbsBar.style.display = 'block';
   if (hint) hint.classList.toggle('visible', isAdmin && photos.length > 1);
 
   const scroll = document.getElementById('thumbsScroll');
   scroll.innerHTML = photos.map((p, i) => {
-    const orderBtns = isAdmin && photos.length > 1 ? `
-      <div class="thumb-order-btns">
-        ${i > 0 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i-1})" title="Mover esquerda">←</button>` : '<span style="width:22px"></span>'}
-        ${i < photos.length-1 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i+1})" title="Mover direita">→</button>` : '<span style="width:22px"></span>'}
-      </div>` : '';
-    return `<div class="thumb-wrap">
-      <img class="thumb-img ${i === currentSlide ? 'active' : ''}" src="${p.url}" onclick="goSlide(${i})" alt="">
-      ${orderBtns}
-    </div>`;
+    const isVid = p.type === 'video';
+    const thumbContent = isVid
+      ? `<div class="thumb-wrap thumb-video-wrap" style="width:68px;height:48px;background:#111;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid ${i===currentSlide?'var(--green-accent)':'transparent'};opacity:${i===currentSlide?1:0.35}" onclick="goSlide(${i})">
+           <div class="thumb-play-icon"></div>
+         </div>`
+      : `<div class="thumb-wrap">
+           <img class="thumb-img ${i === currentSlide ? 'active' : ''}" src="${p.url}" onclick="goSlide(${i})" alt="">
+           ${isAdmin && photos.length > 1 ? `
+           <div class="thumb-order-btns">
+             ${i > 0 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i-1})">←</button>` : '<span style="width:22px"></span>'}
+             ${i < photos.length-1 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i+1})">→</button>` : '<span style="width:22px"></span>'}
+           </div>` : ''}
+         </div>`;
+
+    // for videos, wrap with order buttons differently
+    if (isVid && isAdmin && photos.length > 1) {
+      return `<div style="position:relative;flex-shrink:0">
+        <div class="thumb-wrap thumb-video-wrap" style="width:68px;height:48px;background:#111;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid ${i===currentSlide?'var(--green-accent)':'transparent'};opacity:${i===currentSlide?1:0.35}" onclick="goSlide(${i})">
+          <div class="thumb-play-icon"></div>
+        </div>
+        <div class="thumb-order-btns">
+          ${i > 0 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i-1})">←</button>` : '<span style="width:22px"></span>'}
+          ${i < photos.length-1 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i+1})">→</button>` : '<span style="width:22px"></span>'}
+        </div>
+      </div>`;
+    }
+    return thumbContent;
   }).join('');
 }
 
@@ -700,7 +764,9 @@ function openZoom() {
   const room = rooms[currentRoomIdx];
   const photos = room ? (room.photos || []) : [];
   if (!photos.length) return;
-  document.getElementById('zoomImg').src = photos[currentSlide].url;
+  const current = photos[currentSlide];
+  if (current.type === 'video') return; // vídeo tem player próprio
+  document.getElementById('zoomImg').src = current.url;
   document.getElementById('zoomCounter').textContent = `${currentSlide + 1} / ${photos.length}`;
   document.getElementById('zoomOverlay').classList.add('open');
 }
