@@ -10,6 +10,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -186,14 +187,18 @@ header{background:var(--black2);padding:0;position:sticky;top:0;z-index:100;bord
 .thumbs-scroll{display:flex;gap:4px;overflow-x:auto;scrollbar-width:thin;scrollbar-color:rgba(34,197,94,0.2) transparent;padding-bottom:4px}
 .thumbs-scroll::-webkit-scrollbar{height:2px}
 .thumbs-scroll::-webkit-scrollbar-thumb{background:rgba(34,197,94,0.2)}
-.thumb-wrap{position:relative;flex-shrink:0}
-.thumb-img{width:68px;height:48px;object-fit:cover;cursor:pointer;opacity:0.3;border:2px solid transparent;transition:opacity 0.2s,border-color 0.2s;display:block}
+.thumb-wrap{position:relative;flex-shrink:0;cursor:grab}
+.thumb-wrap:active{cursor:grabbing}
+.thumb-img{width:68px;height:48px;object-fit:cover;cursor:inherit;opacity:0.3;border:2px solid transparent;transition:opacity 0.2s,border-color 0.2s;display:block;pointer-events:none}
 .thumb-img.active{opacity:1;border-color:var(--green-accent)}
-.thumb-img:hover:not(.active){opacity:0.65}
-.thumb-order-btns{display:none;position:absolute;top:0;left:0;right:0;bottom:0;align-items:center;justify-content:space-between;padding:0 2px;background:rgba(0,0,0,0.55)}
-.thumb-wrap:hover .thumb-order-btns{display:flex}
-.btn-thumb-move{background:rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.8);width:22px;height:22px;cursor:pointer;font-size:0.65rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s;padding:0;line-height:1}
-.btn-thumb-move:hover{border-color:var(--green-accent);color:var(--green-accent)}
+.thumb-wrap:hover .thumb-img:not(.active){opacity:0.65}
+.thumb-wrap.sortable-ghost{opacity:0.2;transform:scale(0.9)}
+.thumb-wrap.sortable-chosen{cursor:grabbing}
+.thumb-actions{position:absolute;inset:0;display:none;flex-direction:column;align-items:flex-end;justify-content:flex-start;padding:2px}
+.thumb-wrap:hover .thumb-actions{display:flex}
+.btn-thumb-delete{background:rgba(180,30,30,0.85);border:none;color:white;width:18px;height:18px;cursor:pointer;font-size:0.55rem;display:flex;align-items:center;justify-content:center;line-height:1;flex-shrink:0;transition:background 0.15s}
+.btn-thumb-delete:hover{background:#E24B4A}
+.thumb-order-btns{display:none}
 .thumbs-hint{font-family:'Barlow Condensed',sans-serif;font-size:0.58rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-dim);margin-top:5px;display:none}
 .thumbs-hint.visible{display:block}
 
@@ -711,37 +716,57 @@ function renderSlide() {
   scroll.innerHTML = photos.map((p, i) => {
     const isVid = p.type === 'video';
     const isYt = p.type === 'youtube';
-    const orderBtns = isAdmin && photos.length > 1 ? `
-      <div class="thumb-order-btns">
-        ${i > 0 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i-1})">←</button>` : '<span style="width:22px"></span>'}
-        ${i < photos.length-1 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i+1})">→</button>` : '<span style="width:22px"></span>'}
-      </div>` : '';
+    const deleteBtn = isAdmin ? `<div class="thumb-actions"><button class="btn-thumb-delete" onclick="event.stopPropagation();deletePhoto('${p.id}','${p.storage_path || ''}',${i})" title="Excluir">✕</button></div>` : '';
 
-    if (isYt) {
-      return `<div style="position:relative;flex-shrink:0;width:68px;height:48px">
-        <img class="thumb-img ${i===currentSlide?'active':''}" src="https://img.youtube.com/vi/${p.youtube_id}/mqdefault.jpg" onclick="goSlide(${i})" alt="" style="width:68px;height:48px;object-fit:cover">
-        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
-          <span style="background:rgba(255,0,0,0.85);color:white;font-size:0.55rem;padding:2px 5px;font-weight:700">▶ YT</span>
-        </div>
-        ${orderBtns}
-      </div>`;
-    }
-    if (isVid) {
-      return `<div style="position:relative;flex-shrink:0;width:68px;height:48px">
-        <div style="width:68px;height:48px;background:#111;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid ${i===currentSlide?'var(--green-accent)':'transparent'};opacity:${i===currentSlide?1:0.35}" onclick="goSlide(${i})">
-          <span style="font-size:1.1rem;color:white;opacity:0.8">▶</span>
-        </div>
-        ${orderBtns}
-      </div>`;
-    }
-    return `<div class="thumb-wrap">
-      <img class="thumb-img ${i===currentSlide?'active':''}" src="${p.url}" onclick="goSlide(${i})" alt="">
-      ${orderBtns}
+    if (isYt) return `<div class="thumb-wrap ${i===currentSlide?'thumb-active':''}" data-id="${p.id}" onclick="goSlide(${i})">
+      <img class="thumb-img ${i===currentSlide?'active':''}" src="https://img.youtube.com/vi/${p.youtube_id}/mqdefault.jpg" alt="">
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none"><span style="background:rgba(255,0,0,0.85);color:white;font-size:0.55rem;padding:2px 5px;font-weight:700">▶ YT</span></div>
+      ${deleteBtn}
+    </div>`;
+
+    if (isVid) return `<div class="thumb-wrap ${i===currentSlide?'thumb-active':''}" data-id="${p.id}" onclick="goSlide(${i})" style="width:68px;height:48px;background:#111;display:flex;align-items:center;justify-content:center;border:2px solid ${i===currentSlide?'var(--green-accent)':'transparent'}">
+      <span style="font-size:1.1rem;color:white;opacity:0.8;pointer-events:none">▶</span>
+      ${deleteBtn}
+    </div>`;
+
+    return `<div class="thumb-wrap ${i===currentSlide?'thumb-active':''}" data-id="${p.id}" onclick="goSlide(${i})">
+      <img class="thumb-img ${i===currentSlide?'active':''}" src="${p.url}" alt="">
+      ${deleteBtn}
     </div>`;
   }).join('');
+
+  // init Sortable for admin
+  if (isAdmin && photos.length > 1 && window.Sortable) {
+    Sortable.create(scroll, {
+      animation: 150,
+      ghostClass: 'sortable-ghost',
+      chosenClass: 'sortable-chosen',
+      filter: '.btn-thumb-delete',
+      onEnd: async (evt) => {
+        if (evt.oldIndex === evt.newIndex) return;
+        await reorderPhotos(evt.oldIndex, evt.newIndex);
+      }
+    });
+  }
 }
 
 function goSlide(i) { currentSlide = i; renderSlide(); }
+
+async function deletePhoto(photoId, storagePath, idx) {
+  if (!confirm('Excluir esta foto/vídeo?')) return;
+  try {
+    if (storagePath && !storagePath.startsWith('youtube/')) {
+      await db.storage.from(STORAGE_BUCKET).remove([storagePath]);
+    }
+    const { error } = await db.from('photos').delete().eq('id', photoId);
+    if (error) throw error;
+    showToast('Excluído');
+    await loadObras();
+    currentObra = obras.find(o => o.id === currentObra.id);
+    currentSlide = Math.max(0, idx - 1);
+    renderRoomTabs(); renderSlide(); renderGrid();
+  } catch(e) { console.error(e); showToast('Erro ao excluir'); }
+}
 
 async function reorderPhotos(fromIdx, toIdx) {
   const rooms = currentObra.rooms || [];
