@@ -345,6 +345,7 @@ header{background:var(--black2);padding:0;position:sticky;top:0;z-index:100;bord
     </div>
     <div class="modal-right">
       <button class="btn-add-photos" id="btnAddPhotos" onclick="triggerPhotoUpload()">+ Fotos / Vídeos</button>
+      <button class="btn-add-photos" id="btnAddYt" style="display:none;border-color:rgba(255,80,80,0.4);color:#ff6b6b" onclick="promptYoutube()">+ YouTube</button>
       <button class="modal-close" onclick="closeSlideshow()">✕</button>
     </div>
   </div>
@@ -353,6 +354,7 @@ header{background:var(--black2);padding:0;position:sticky;top:0;z-index:100;bord
     <button class="btn-slide-nav btn-slide-prev" onclick="navSlide(-1)">←</button>
     <img id="slideImg" src="" alt="" onclick="openZoom()">
     <video id="slideVideo" controls playsinline></video>
+    <iframe id="slideYoutube" style="display:none;width:100%;height:100%;border:none" allowfullscreen allow="autoplay; encrypted-media"></iframe>
     <div id="slideEmpty" class="slide-empty">
       <div class="slide-empty-icon">📷</div>
       <div class="slide-empty-txt">Nenhuma foto neste<br>cômodo ainda</div>
@@ -563,8 +565,6 @@ async function uploadPhoto(obraId, roomId, file) {
   if (dbErr) throw dbErr;
   return publicUrl;
 }
-  return publicUrl;
-}
 
 // ══════════════════════════════
 // STATS
@@ -628,6 +628,7 @@ function openSlideshow(obraId) {
   document.getElementById('modalClientName').textContent = currentObra.client_name;
   document.getElementById('modalMetaLine').textContent = [currentObra.address, currentObra.size].filter(Boolean).join(' · ');
   document.getElementById('btnAddPhotos').classList.toggle('visible', isAdmin);
+  document.getElementById('btnAddYt').classList.toggle('visible', isAdmin);
   renderRoomTabs();
   const rooms = currentObra.rooms || [];
   if (rooms.length > 0) selectRoom(0); else renderSlide();
@@ -671,18 +672,28 @@ function renderSlide() {
   empty.style.display = 'none';
   const current = photos[currentSlide];
   const isVideo = current.type === 'video';
+  const isYoutube = current.type === 'youtube';
 
-  // pause any playing video when switching
+  // pause any playing video/youtube when switching
   if (!video.paused) { video.pause(); }
+  const ytFrame = document.getElementById('slideYoutube');
+  if (ytFrame.src) { ytFrame.src = ytFrame.src; } // reload stops playback
 
-  if (isVideo) {
-    img.style.display = 'none';
-    btnZoom && (btnZoom.style.display = 'none');
+  // hide all
+  img.style.display = 'none';
+  video.style.display = 'none';
+  document.getElementById('slideYoutube').style.display = 'none';
+  btnZoom && (btnZoom.style.display = 'none');
+
+  if (isYoutube) {
+    const yt = document.getElementById('slideYoutube');
+    yt.style.display = 'block';
+    yt.src = `https://www.youtube.com/embed/${current.youtube_id}?rel=0`;
+  } else if (isVideo) {
     video.style.display = 'block';
     video.src = current.url;
     video.load();
   } else {
-    video.style.display = 'none';
     btnZoom && (btnZoom.style.display = 'flex');
     img.style.display = 'block';
     img.classList.add('fading');
@@ -696,32 +707,34 @@ function renderSlide() {
   const scroll = document.getElementById('thumbsScroll');
   scroll.innerHTML = photos.map((p, i) => {
     const isVid = p.type === 'video';
-    const thumbContent = isVid
-      ? `<div class="thumb-wrap thumb-video-wrap" style="width:68px;height:48px;background:#111;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid ${i===currentSlide?'var(--green-accent)':'transparent'};opacity:${i===currentSlide?1:0.35}" onclick="goSlide(${i})">
-           <div class="thumb-play-icon"></div>
-         </div>`
-      : `<div class="thumb-wrap">
-           <img class="thumb-img ${i === currentSlide ? 'active' : ''}" src="${p.url}" onclick="goSlide(${i})" alt="">
-           ${isAdmin && photos.length > 1 ? `
-           <div class="thumb-order-btns">
-             ${i > 0 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i-1})">←</button>` : '<span style="width:22px"></span>'}
-             ${i < photos.length-1 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i+1})">→</button>` : '<span style="width:22px"></span>'}
-           </div>` : ''}
-         </div>`;
+    const isYt = p.type === 'youtube';
+    const orderBtns = isAdmin && photos.length > 1 ? `
+      <div class="thumb-order-btns">
+        ${i > 0 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i-1})">←</button>` : '<span style="width:22px"></span>'}
+        ${i < photos.length-1 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i+1})">→</button>` : '<span style="width:22px"></span>'}
+      </div>` : '';
 
-    // for videos, wrap with order buttons differently
-    if (isVid && isAdmin && photos.length > 1) {
-      return `<div style="position:relative;flex-shrink:0">
-        <div class="thumb-wrap thumb-video-wrap" style="width:68px;height:48px;background:#111;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid ${i===currentSlide?'var(--green-accent)':'transparent'};opacity:${i===currentSlide?1:0.35}" onclick="goSlide(${i})">
-          <div class="thumb-play-icon"></div>
+    if (isYt) {
+      return `<div style="position:relative;flex-shrink:0;width:68px;height:48px">
+        <img class="thumb-img ${i===currentSlide?'active':''}" src="https://img.youtube.com/vi/${p.youtube_id}/mqdefault.jpg" onclick="goSlide(${i})" alt="" style="width:68px;height:48px;object-fit:cover">
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+          <span style="background:rgba(255,0,0,0.85);color:white;font-size:0.55rem;padding:2px 5px;font-weight:700">▶ YT</span>
         </div>
-        <div class="thumb-order-btns">
-          ${i > 0 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i-1})">←</button>` : '<span style="width:22px"></span>'}
-          ${i < photos.length-1 ? `<button class="btn-thumb-move" onclick="event.stopPropagation();reorderPhotos(${i},${i+1})">→</button>` : '<span style="width:22px"></span>'}
-        </div>
+        ${orderBtns}
       </div>`;
     }
-    return thumbContent;
+    if (isVid) {
+      return `<div style="position:relative;flex-shrink:0;width:68px;height:48px">
+        <div style="width:68px;height:48px;background:#111;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid ${i===currentSlide?'var(--green-accent)':'transparent'};opacity:${i===currentSlide?1:0.35}" onclick="goSlide(${i})">
+          <span style="font-size:1.1rem;color:white;opacity:0.8">▶</span>
+        </div>
+        ${orderBtns}
+      </div>`;
+    }
+    return `<div class="thumb-wrap">
+      <img class="thumb-img ${i===currentSlide?'active':''}" src="${p.url}" onclick="goSlide(${i})" alt="">
+      ${orderBtns}
+    </div>`;
   }).join('');
 }
 
@@ -790,6 +803,33 @@ function zoomNav(dir) {
 function triggerPhotoUpload() {
   if (!currentObra) return;
   document.getElementById('photoFileInput').click();
+}
+
+async function promptYoutube() {
+  if (!currentObra) return;
+  const url = prompt('Cole o link do YouTube:');
+  if (!url) return;
+  // extract video ID from various YouTube URL formats
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/);
+  if (!match) { showToast('Link do YouTube inválido'); return; }
+  const youtubeId = match[1];
+  try {
+    const room = await ensureRoom(currentObra.id);
+    const { error } = await db.from('photos').insert([{
+      room_id: room.id,
+      obra_id: currentObra.id,
+      url: `https://www.youtube.com/watch?v=${youtubeId}`,
+      storage_path: `youtube/${youtubeId}`,
+      type: 'youtube',
+      youtube_id: youtubeId,
+      order: 999
+    }]);
+    if (error) throw error;
+    showToast('Vídeo do YouTube adicionado');
+    await loadObras();
+    currentObra = obras.find(o => o.id === currentObra.id);
+    renderRoomTabs(); renderSlide(); renderGrid();
+  } catch(e) { console.error(e); showToast('Erro ao adicionar vídeo'); }
 }
 
 async function ensureRoom(obraId) {
